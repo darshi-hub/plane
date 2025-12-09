@@ -1,91 +1,282 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <meta charset="utf-8">
-  <title>Stylish 2D Driving (Second Person)</title>
-  <style>
-    body { margin:0; background:#111; color:#fff; font-family:monospace; }
-    canvas { display:block; margin:0 auto; background:#000; }
-    #hud { position:fixed; top:10px; left:10px; background:rgba(0,0,0,0.5); padding:8px 12px; border-radius:6px; }
-  </style>
+    <meta charset="UTF-8">
+    <title>2D Open World Driving</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #222; font-family: sans-serif; }
+        canvas { display: block; }
+        #ui {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: white;
+            background: rgba(0,0,0,0.5);
+            padding: 10px;
+            border-radius: 5px;
+            pointer-events: none;
+        }
+    </style>
 </head>
 <body>
-<canvas id="game" width="800" height="600"></canvas>
-<div id="hud"></div>
+
+<div id="ui">
+    <h2>Open World Drive</h2>
+    <p>Use <b>Arrow Keys</b> to Drive</p>
+    <p>Avoid Buildings & Traffic</p>
+</div>
+
+<canvas id="gameCanvas"></canvas>
+
 <script>
-const canvas=document.getElementById("game");
-const ctx=canvas.getContext("2d");
-const hud=document.getElementById("hud");
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
 
-const TILE=64, MAP_W=30, MAP_H=30;
-const map=[];
-for(let y=0;y<MAP_H;y++){
-  map[y]=[];
-  for(let x=0;x<MAP_W;x++){
-    if(x%5===0||y%5===0) map[y][x]="road";
-    else if(Math.random()<0.15) map[y][x]="building";
-    else map[y][x]="grass";
-  }
-}
+// Resize canvas to full screen
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
 
-let car={x:TILE*2,y:TILE*2,angle:0,speed:0};
-const keys={};
-window.addEventListener("keydown",e=>keys[e.code]=true);
-window.addEventListener("keyup",e=>keys[e.code]=false);
+// --- GAME CONFIGURATION ---
+const TILE_SIZE = 100; // Size of buildings/roads
+const MAP_SIZE = 50;   // 50x50 grid
+const CAR_WIDTH = 20;
+const CAR_LENGTH = 40;
 
-function update(){
-  if(keys["ArrowUp"]||keys["KeyW"]) car.speed+=0.3;
-  if(keys["ArrowDown"]||keys["KeyS"]) car.speed-=0.3;
-  if(keys["ArrowLeft"]||keys["KeyA"]) car.angle-=0.05*car.speed;
-  if(keys["ArrowRight"]||keys["KeyD"]) car.angle+=0.05*car.speed;
-  car.speed*=0.95;
-  const nx=car.x+Math.sin(car.angle)*car.speed;
-  const ny=car.y-Math.cos(car.angle)*car.speed;
-  const tx=Math.floor(nx/TILE),ty=Math.floor(ny/TILE);
-  if(map[ty]&&map[ty][tx]!=="building"){car.x=nx;car.y=ny;}
-}
-
-function draw(){
-  ctx.clearRect(0,0,canvas.width,canvas.height);
-  const camX=car.x-canvas.width/2,camY=car.y-canvas.height/2;
-
-  // isometric tilt
-  function iso(x,y){
-    return {X:(x-y)*0.7, Y:(x+y)*0.35};
-  }
-
-  for(let y=0;y<MAP_H;y++){
-    for(let x=0;x<MAP_W;x++){
-      const tile=map[y][x];
-      const pos=iso(x*TILE-camX,y*TILE-camY);
-      ctx.fillStyle= tile==="road" ? "#0ff" : tile==="building" ? "#f0f" : "#222";
-      ctx.fillRect(pos.X,pos.Y,TILE*0.7,TILE*0.35);
-      if(tile==="building"){
-        ctx.fillStyle="#fff";
-        ctx.fillRect(pos.X+10,pos.Y-20,TILE*0.5,TILE*0.5);
-      }
+// --- ASSETS GENERATION ---
+// 0 = Grass, 1 = Road, 2 = Building
+let map = [];
+for (let y = 0; y < MAP_SIZE; y++) {
+    let row = [];
+    for (let x = 0; x < MAP_SIZE; x++) {
+        // Simple procedural generation: 
+        // Create a grid of roads, random buildings
+        if (x === 0 || x === MAP_SIZE - 1 || y === 0 || y === MAP_SIZE - 1) {
+            row.push(2); // Border walls
+        } else if (x % 4 === 0 || y % 4 === 0) {
+            row.push(1); // Roads
+        } else {
+            // Random chance for building or parking lot (grass)
+            row.push(Math.random() > 0.3 ? 2 : 0);
+        }
     }
-  }
-
-  // car
-  const carPos=iso(car.x-camX,car.y-camY);
-  ctx.save();
-  ctx.translate(carPos.X,carPos.Y);
-  ctx.rotate(car.angle);
-  ctx.fillStyle="red";
-  ctx.fillRect(-15,-30,30,60);
-  ctx.restore();
-
-  hud.innerHTML=`You are driving at ${Math.floor(car.speed*3.6)} km/h<br>
-                 You are at (${Math.floor(car.x)},${Math.floor(car.y)})`;
+    map.push(row);
 }
 
-function loop(){
-  update();
-  draw();
-  requestAnimationFrame(loop);
+// --- CLASSES ---
+
+class Car {
+    constructor(x, y, color, isPlayer = false) {
+        this.x = x;
+        this.y = y;
+        this.width = CAR_WIDTH;
+        this.height = CAR_LENGTH;
+        this.color = color;
+        this.angle = 0;
+        this.speed = 0;
+        this.maxSpeed = isPlayer ? 8 : 4 + Math.random() * 2;
+        this.acceleration = 0.2;
+        this.friction = 0.05;
+        this.rotationSpeed = 0.06;
+        this.isPlayer = isPlayer;
+        
+        // AI Logic
+        this.changeDirTimer = 0;
+    }
+
+    update(input) {
+        if (this.isPlayer) {
+            // Player Physics
+            if (input.up) this.speed += this.acceleration;
+            if (input.down) this.speed -= this.acceleration;
+            
+            if (Math.abs(this.speed) > 0.1) {
+                if (input.left) this.angle -= this.rotationSpeed * Math.sign(this.speed);
+                if (input.right) this.angle += this.rotationSpeed * Math.sign(this.speed);
+            }
+        } else {
+            // Simple AI
+            this.speed = this.maxSpeed * 0.5; // AI cruises slower
+            this.x += Math.sin(this.angle) * this.speed;
+            this.y -= Math.cos(this.angle) * this.speed;
+            
+            // Randomly turn or turn on collision
+            this.changeDirTimer++;
+            let tileX = Math.floor(this.x / TILE_SIZE);
+            let tileY = Math.floor(this.y / TILE_SIZE);
+            
+            // Wall detection / Turn logic
+            if (this.changeDirTimer > 100 || isSolid(this.x + Math.sin(this.angle)*40, this.y - Math.cos(this.angle)*40)) {
+                this.angle += Math.PI / 2; // Turn 90 degrees
+                this.changeDirTimer = 0;
+            }
+            return; 
+        }
+
+        // Apply Friction and Max Speed cap
+        if (this.speed > 0) this.speed -= this.friction;
+        if (this.speed < 0) this.speed += this.friction;
+        if (Math.abs(this.speed) < this.friction) this.speed = 0;
+        
+        if (this.speed > this.maxSpeed) this.speed = this.maxSpeed;
+        if (this.speed < -this.maxSpeed / 2) this.speed = -this.maxSpeed / 2;
+
+        // Calculate Velocity
+        this.x += Math.sin(this.angle) * this.speed;
+        this.y -= Math.cos(this.angle) * this.speed;
+
+        // Collision with World
+        if (isSolid(this.x, this.y)) {
+            this.speed = -this.speed * 0.5; // Bounce back
+            this.x -= Math.sin(this.angle) * this.speed * 2;
+            this.y += Math.cos(this.angle) * this.speed * 2;
+        }
+    }
+
+    draw(ctx, camX, camY) {
+        ctx.save();
+        ctx.translate(this.x - camX, this.y - camY);
+        ctx.rotate(this.angle);
+        
+        // Car Body
+        ctx.fillStyle = this.color;
+        ctx.fillRect(-this.width/2, -this.height/2, this.width, this.height);
+        
+        // Windshield
+        ctx.fillStyle = '#88ccff';
+        ctx.fillRect(-this.width/2 + 2, -this.height/4, this.width - 4, this.height/4);
+
+        // Headlights
+        ctx.fillStyle = 'yellow';
+        ctx.fillRect(-this.width/2 + 2, -this.height/2, 4, 4);
+        ctx.fillRect(this.width/2 - 6, -this.height/2, 4, 4);
+
+        ctx.restore();
+    }
 }
-loop();
+
+// --- INPUT HANDLING ---
+const keys = { up: false, down: false, left: false, right: false };
+window.addEventListener('keydown', (e) => {
+    if(e.key === 'ArrowUp' || e.key === 'w') keys.up = true;
+    if(e.key === 'ArrowDown' || e.key === 's') keys.down = true;
+    if(e.key === 'ArrowLeft' || e.key === 'a') keys.left = true;
+    if(e.key === 'ArrowRight' || e.key === 'd') keys.right = true;
+});
+window.addEventListener('keyup', (e) => {
+    if(e.key === 'ArrowUp' || e.key === 'w') keys.up = false;
+    if(e.key === 'ArrowDown' || e.key === 's') keys.down = false;
+    if(e.key === 'ArrowLeft' || e.key === 'a') keys.left = false;
+    if(e.key === 'ArrowRight' || e.key === 'd') keys.right = false;
+});
+
+// --- HELPER FUNCTIONS ---
+function isSolid(x, y) {
+    const gridX = Math.floor(x / TILE_SIZE);
+    const gridY = Math.floor(y / TILE_SIZE);
+    
+    // Bounds check
+    if (gridX < 0 || gridX >= MAP_SIZE || gridY < 0 || gridY >= MAP_SIZE) return true;
+    
+    // Check if tile is a building (2)
+    return map[gridY][gridX] === 2;
+}
+
+// --- SETUP GAME ---
+// Find a road tile to spawn the player
+let startX = 150, startY = 150;
+for(let y=0; y<MAP_SIZE; y++) {
+    for(let x=0; x<MAP_SIZE; x++) {
+        if(map[y][x] === 1) {
+            startX = x * TILE_SIZE + TILE_SIZE/2;
+            startY = y * TILE_SIZE + TILE_SIZE/2;
+            break;
+        }
+    }
+}
+
+const player = new Car(startX, startY, 'red', true);
+const traffic = [];
+
+// Spawn Traffic
+for(let i=0; i<20; i++) {
+    // Random spawn
+    let tx = Math.floor(Math.random() * MAP_SIZE) * TILE_SIZE + TILE_SIZE/2;
+    let ty = Math.floor(Math.random() * MAP_SIZE) * TILE_SIZE + TILE_SIZE/2;
+    if (!isSolid(tx, ty)) {
+        let npc = new Car(tx, ty, ['blue', 'green', 'orange', 'white'][Math.floor(Math.random()*4)]);
+        npc.angle = Math.floor(Math.random() * 4) * (Math.PI/2); // Align to grid
+        traffic.push(npc);
+    }
+}
+
+// --- GAME LOOP ---
+function gameLoop() {
+    // 1. Update
+    player.update(keys);
+    traffic.forEach(car => car.update());
+
+    // 2. Camera Logic (Center on Player)
+    let camX = player.x - canvas.width / 2;
+    let camY = player.y - canvas.height / 2;
+
+    // Clamp camera to map bounds
+    camX = Math.max(0, Math.min(camX, MAP_SIZE * TILE_SIZE - canvas.width));
+    camY = Math.max(0, Math.min(camY, MAP_SIZE * TILE_SIZE - canvas.height));
+
+    // 3. Draw Background / World
+    ctx.fillStyle = '#333'; // Default ground
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Calculate visible tiles only (Optimization)
+    const startCol = Math.floor(camX / TILE_SIZE);
+    const endCol = startCol + (canvas.width / TILE_SIZE) + 1;
+    const startRow = Math.floor(camY / TILE_SIZE);
+    const endRow = startRow + (canvas.height / TILE_SIZE) + 1;
+
+    for (let y = startRow; y <= endRow; y++) {
+        for (let x = startCol; x <= endCol; x++) {
+            if (y >= 0 && y < MAP_SIZE && x >= 0 && x < MAP_SIZE) {
+                let tileType = map[y][x];
+                let drawX = (x * TILE_SIZE) - camX;
+                let drawY = (y * TILE_SIZE) - camY;
+
+                if (tileType === 1) {
+                    // Road
+                    ctx.fillStyle = '#555';
+                    ctx.fillRect(drawX, drawY, TILE_SIZE, TILE_SIZE);
+                    // Road dashes
+                    ctx.fillStyle = '#FFF';
+                    ctx.fillRect(drawX + TILE_SIZE/2 - 2, drawY + 10, 4, TILE_SIZE - 20);
+                } else if (tileType === 2) {
+                    // Building (with simple 3D effect)
+                    ctx.fillStyle = '#222'; // Shadow
+                    ctx.fillRect(drawX + 10, drawY + 10, TILE_SIZE, TILE_SIZE);
+                    
+                    ctx.fillStyle = '#8a8'; // Roof
+                    ctx.fillRect(drawX, drawY, TILE_SIZE, TILE_SIZE);
+                    
+                    // Windows
+                    ctx.fillStyle = '#bdf';
+                    ctx.fillRect(drawX + 10, drawY + 10, 20, 20);
+                    ctx.fillRect(drawX + 60, drawY + 10, 20, 20);
+                } else {
+                    // Grass
+                    ctx.fillStyle = '#2d4';
+                    ctx.fillRect(drawX, drawY, TILE_SIZE, TILE_SIZE);
+                }
+            }
+        }
+    }
+
+    // 4. Draw Objects
+    traffic.forEach(car => car.draw(ctx, camX, camY));
+    player.draw(ctx, camX, camY);
+
+    requestAnimationFrame(gameLoop);
+}
+
+gameLoop();
+
 </script>
 </body>
 </html>
