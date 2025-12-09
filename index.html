@@ -1,306 +1,103 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
-  <title>3D Racing Prototype (One File)</title>
+  <meta charset="utf-8">
+  <title>2D Open World Driving</title>
   <style>
-    html, body { margin: 0; height: 100%; background: #0b0f1a; }
-    #hud {
-      position: fixed; top: 12px; left: 12px; color: #fff; font-family: system-ui, sans-serif;
-      display: grid; gap: 6px; z-index: 10; padding: 8px 10px; background: rgba(0,0,0,0.35); backdrop-filter: blur(6px); border-radius: 8px;
-    }
-    .btns {
-      position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
-      display: grid; grid-template-columns: repeat(3, 84px); gap: 12px; z-index: 10;
-    }
-    .btn {
-      background: rgba(255,255,255,0.08); color: #fff; border: 1px solid rgba(255,255,255,0.18);
-      padding: 14px 10px; border-radius: 10px; text-align: center; user-select: none;
-      backdrop-filter: blur(8px);
-    }
-    .btn:active { background: rgba(255,255,255,0.18); }
-    canvas { display: block; }
+    body { margin:0; background:#222; }
+    canvas { display:block; margin:0 auto; background:#444; }
   </style>
 </head>
 <body>
-  <div id="hud">
-    <div>Speed: <span id="speed">0</span> km/h</div>
-    <div>Lap: <span id="lap">0</span></div>
-    <div>Time: <span id="time">0.00</span>s</div>
-  </div>
-  <div class="btns">
-    <div class="btn" id="left">◀︎</div>
-    <div class="btn" id="accel">▲</div>
-    <div class="btn" id="right">▶︎</div>
-  </div>
+<canvas id="game" width="800" height="600"></canvas>
+<script>
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
 
-  <!-- Three.js CDN -->
-  <script src="https://cdn.jsdelivr.net/npm/three@0.160/build/three.min.js"></script>
+// --- Map setup ---
+const TILE = 64;
+const MAP_W = 50, MAP_H = 50;
+const map = [];
+for (let y=0; y<MAP_H; y++) {
+  map[y] = [];
+  for (let x=0; x<MAP_W; x++) {
+    if (x%5===0 || y%5===0) map[y][x] = "road";
+    else if (Math.random()<0.1) map[y][x] = "building";
+    else map[y][x] = "grass";
+  }
+}
 
-  <!-- Game Script -->
-  <script>
-    // --- Renderer, scene, camera ---
-    const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-    renderer.setSize(innerWidth, innerHeight);
-    renderer.outputColorSpace = THREE.SRGBColorSpace;
-    renderer.physicallyCorrectLights = true;
-    document.body.appendChild(renderer.domElement);
+// --- Car setup ---
+let car = { x: TILE*2, y: TILE*2, angle: 0, speed: 0 };
+const keys = {};
+window.addEventListener("keydown", e=>keys[e.code]=true);
+window.addEventListener("keyup", e=>keys[e.code]=false);
 
-    const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x0b0f1a);
-    scene.fog = new THREE.Fog(0x0b0f1a, 50, 250);
+// --- Update ---
+function update(dt) {
+  if (keys["ArrowUp"]||keys["KeyW"]) car.speed += 0.2;
+  if (keys["ArrowDown"]||keys["KeyS"]) car.speed -= 0.2;
+  if (keys["ArrowLeft"]||keys["KeyA"]) car.angle -= 0.05*car.speed;
+  if (keys["ArrowRight"]||keys["KeyD"]) car.angle += 0.05*car.speed;
 
-    const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.1, 1000);
-    camera.position.set(0, 6, 12);
+  car.speed *= 0.95; // friction
+  const nx = car.x + Math.sin(car.angle)*car.speed;
+  const ny = car.y - Math.cos(car.angle)*car.speed;
 
-    // Lights
-    const amb = new THREE.AmbientLight(0xffffff, 0.4);
-    scene.add(amb);
-    const sun = new THREE.DirectionalLight(0xffffff, 1.2);
-    sun.position.set(60, 100, 30);
-    sun.castShadow = true;
-    scene.add(sun);
+  // Collision with buildings
+  const tx = Math.floor(nx/TILE), ty = Math.floor(ny/TILE);
+  if (map[ty] && map[ty][tx] !== "building") {
+    car.x = nx; car.y = ny;
+  }
+}
 
-    // Ground plane (grass)
-    const ground = new THREE.Mesh(
-      new THREE.PlaneGeometry(2000, 2000),
-      new THREE.MeshStandardMaterial({ color: 0x1e3a2a, roughness: 1 })
-    );
-    ground.rotation.x = -Math.PI / 2;
-    ground.receiveShadow = true;
-    scene.add(ground);
+// --- Draw ---
+function draw() {
+  ctx.clearRect(0,0,canvas.width,canvas.height);
 
-    // --- Track (extruded ribbon along a closed curve) ---
-    function makeTrack() {
-      const pts = [];
-      const radius = 60;
-      for (let i = 0; i < 32; i++) {
-        const angle = (i / 32) * Math.PI * 2;
-        const r = radius + Math.sin(angle * 3) * 8 + (i % 4 === 0 ? 4 : 0);
-        pts.push(new THREE.Vector3(Math.cos(angle) * r, 0, Math.sin(angle) * r));
-      }
-      const curve = new THREE.CatmullRomCurve3(pts, true, 'catmullrom', 0.05);
+  // Camera center
+  const camX = car.x - canvas.width/2;
+  const camY = car.y - canvas.height/2;
 
-      const trackWidth = 8;
-      const frames = curve.computeFrenetFrames(400, true);
-      const geometry = new THREE.BufferGeometry();
-      const positions = [];
-      const normals = [];
-      const uvs = [];
-      const indices = [];
-
-      for (let i = 0; i < frames.tangents.length; i++) {
-        const t = i / frames.tangents.length;
-        const p = curve.getPointAt(t);
-        const N = frames.normals[i];
-
-        const left = new THREE.Vector3().copy(N).multiplyScalar(-trackWidth / 2);
-        const right = new THREE.Vector3().copy(N).multiplyScalar(trackWidth / 2);
-
-        const pL = new THREE.Vector3().copy(p).add(left);
-        const pR = new THREE.Vector3().copy(p).add(right);
-
-        positions.push(pL.x, 0.02, pL.z, pR.x, 0.02, pR.z);
-        normals.push(0, 1, 0, 0, 1, 0);
-        uvs.push(0, t * 20, 1, t * 20);
-      }
-      for (let i = 0; i < positions.length / 6 - 2; i += 2) {
-        indices.push(i, i + 1, i + 2, i + 1, i + 3, i + 2);
-      }
-      indices.push(positions.length / 3 - 2, positions.length / 3 - 1, 0);
-      indices.push(positions.length / 3 - 1, 1, 0);
-
-      geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-      geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
-      geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
-      geometry.setIndex(indices);
-      geometry.computeBoundingSphere();
-
-      const mat = new THREE.MeshStandardMaterial({ color: 0x363636, roughness: 0.8, metalness: 0.1 });
-      const trackMesh = new THREE.Mesh(geometry, mat);
-      trackMesh.receiveShadow = true;
-      scene.add(trackMesh);
-
-      return { curve, trackWidth, trackMesh };
-    }
-
-    const track = makeTrack();
-
-    // --- Obstacles ---
-    const obstacles = [];
-    const boxMat = new THREE.MeshStandardMaterial({ color: 0x8a2be2, roughness: 0.6 });
-    for (let i = 0; i < 12; i++) {
-      const box = new THREE.Mesh(new THREE.BoxGeometry(2, 2, 2), boxMat);
-      const t = i / 12;
-      const p = track.curve.getPointAt(t);
-      const n = track.curve.getTangentAt(t);
-      const off = new THREE.Vector3(-n.z, 0, n.x).multiplyScalar((Math.random() - 0.5) * 3);
-      box.position.set(p.x + off.x, 1, p.z + off.z);
-      box.castShadow = true;
-      scene.add(box);
-      box.userData.bb = new THREE.Box3().setFromObject(box);
-      obstacles.push(box);
-    }
-
-    // --- Car ---
-    const car = new THREE.Group();
-    const body = new THREE.Mesh(
-      new THREE.BoxGeometry(1.8, 0.6, 3.2),
-      new THREE.MeshStandardMaterial({ color: 0x1ea7e1, metalness: 0.3, roughness: 0.4 })
-    );
-    body.position.y = 0.5;
-    body.castShadow = true;
-    car.add(body);
-
-    const wheelGeo = new THREE.CylinderGeometry(0.4, 0.4, 0.3, 16);
-    wheelGeo.rotateZ(Math.PI / 2);
-    const wheelMat = new THREE.MeshStandardMaterial({ color: 0x222222 });
-    [
-      [0.9, 0.25, 1.2], [-0.9, 0.25, 1.2],
-      [0.9, 0.25, -1.2], [-0.9, 0.25, -1.2],
-    ].forEach(([x, y, z]) => {
-      const w = new THREE.Mesh(wheelGeo, wheelMat);
-      w.position.set(x, y, z);
-      w.castShadow = true;
-      car.add(w);
-    });
-    scene.add(car);
-
-    const startPos = track.curve.getPointAt(0);
-    const startTan = track.curve.getTangentAt(0);
-    car.position.set(startPos.x, 0.3, startPos.z);
-    car.rotation.y = Math.atan2(startTan.x, startTan.z);
-
-    // --- Controls & physics ---
-    const keys = { left: false, right: false, accel: false, brake: false };
-    window.addEventListener('keydown', (e) => {
-      if (['ArrowLeft', 'KeyA'].includes(e.code)) keys.left = true;
-      if (['ArrowRight', 'KeyD'].includes(e.code)) keys.right = true;
-      if (['ArrowUp', 'KeyW'].includes(e.code)) keys.accel = true;
-      if (['ArrowDown', 'KeyS'].includes(e.code)) keys.brake = true;
-    });
-    window.addEventListener('keyup', (e) => {
-      if (['ArrowLeft', 'KeyA'].includes(e.code)) keys.left = false;
-      if (['ArrowRight', 'KeyD'].includes(e.code)) keys.right = false;
-      if (['ArrowUp', 'KeyW'].includes(e.code)) keys.accel = false;
-      if (['ArrowDown', 'KeyS'].includes(e.code)) keys.brake = false;
-    });
-
-    const leftBtn = document.getElementById('left');
-    const rightBtn = document.getElementById('right');
-    const accelBtn = document.getElementById('accel');
-    const press = (el, set) => {
-      el.addEventListener('touchstart', (e) => { e.preventDefault(); set(true); }, { passive: false });
-      el.addEventListener('touchend', (e) => { e.preventDefault(); set(false); }, { passive: false });
-      el.addEventListener('touchcancel', (e) => { e.preventDefault(); set(false); }, { passive: false });
-    };
-    press(leftBtn, v => keys.left = v);
-    press(rightBtn, v => keys.right = v);
-    press(accelBtn, v => keys.accel = v);
-
-    // Physics params
-    let speed = 0; // m/s
-    let steer = 0; // radians
-    const maxSpeed = 38; // ~136 km/h
-    const accel = 16; // m/s^2
-    const brakePower = 24;
-    const drag = 0.98;
-
-    function updateCar(dt) {
-      const steerStrength = THREE.MathUtils.lerp(1.2, 0.35, speed / maxSpeed);
-      if (keys.left) steer -= 1.8 * dt * steerStrength;
-      if (keys.right) steer += 1.8 * dt * steerStrength;
-      steer *= 0.92;
-
-      if (keys.accel) speed += accel * dt;
-      if (keys.brake) speed -= brakePower * dt;
-
-      speed = THREE.MathUtils.clamp(speed, -8, maxSpeed);
-      speed *= drag;
-
-      // Off-track check (ray)
-      const down = new THREE.Raycaster(car.position.clone().add(new THREE.Vector3(0, 0.6, 0)), new THREE.Vector3(0, -1, 0), 0, 2);
-      const hits = down.intersectObject(track.trackMesh, true);
-      const onTrack = hits.length > 0;
-      if (!onTrack) speed *= 0.94;
-
-      const forward = new THREE.Vector3(Math.sin(car.rotation.y), 0, Math.cos(car.rotation.y));
-      car.position.add(forward.multiplyScalar(speed * dt));
-
-      car.rotation.y += steer * dt * (speed / 4);
-
-      const carBB = new THREE.Box3().setFromObject(body);
-      for (const o of obstacles) {
-        o.userData.bb.setFromObject(o);
-        if (carBB.intersectsBox(o.userData.bb)) {
-          speed = Math.max(0, speed * 0.4);
-          const away = new THREE.Vector3().subVectors(car.position, o.position).setY(0).normalize().multiplyScalar(1.2);
-          car.position.add(away);
-        }
+  // Draw map
+  for (let y=0; y<MAP_H; y++) {
+    for (let x=0; x<MAP_W; x++) {
+      const tile = map[y][x];
+      let color = "#3a3"; // grass
+      if (tile==="road") color="#666";
+      if (tile==="building") color="#555";
+      ctx.fillStyle = color;
+      ctx.fillRect(x*TILE-camX, y*TILE-camY, TILE, TILE);
+      if (tile==="building") {
+        ctx.fillStyle="#999";
+        ctx.fillRect(x*TILE-camX+10, y*TILE-camY+10, TILE-20, TILE-20);
       }
     }
+  }
 
-    // --- Camera (chase with spring) ---
-    const camTarget = new THREE.Vector3();
-    function updateCamera(dt) {
-      const desired = new THREE.Vector3(
-        car.position.x - Math.sin(car.rotation.y) * 6,
-        car.position.y + 3.4,
-        car.position.z - Math.cos(car.rotation.y) * 6
-      );
-      camTarget.lerp(desired, 1 - Math.pow(0.0001, dt));
-      camera.position.copy(camTarget);
-      camera.lookAt(car.position.x, car.position.y + 1, car.position.z + 0);
-    }
+  // Draw car
+  ctx.save();
+  ctx.translate(car.x-camX, car.y-camY);
+  ctx.rotate(car.angle);
+  ctx.fillStyle="red";
+  ctx.fillRect(-15,-30,30,60);
+  ctx.restore();
 
-    // --- HUD (speed, lap, timer) ---
-    const speedEl = document.getElementById('speed');
-    const lapEl = document.getElementById('lap');
-    const timeEl = document.getElementById('time');
-    let lap = 0;
-    let lapTime = 0;
-    const lapGate = new THREE.Vector3(startPos.x, 0, startPos.z);
-    let crossedGate = false;
+  // HUD
+  ctx.fillStyle="white";
+  ctx.fillText("Speed: "+car.speed.toFixed(1),10,20);
+  ctx.fillText("Pos: "+Math.floor(car.x)+","+Math.floor(car.y),10,40);
+}
 
-    function updateHUD(dt) {
-      lapTime += dt;
-      timeEl.textContent = lapTime.toFixed(2);
-      speedEl.textContent = (speed * 3.6).toFixed(0);
-
-      const dist = car.position.distanceTo(lapGate);
-      if (dist < 5 && !crossedGate && speed > 2) {
-        lap += 1;
-        lapEl.textContent = lap;
-        lapTime = 0;
-        crossedGate = true;
-      }
-      if (dist > 8) crossedGate = false;
-    }
-
-    // --- Resize ---
-    addEventListener('resize', () => {
-      camera.aspect = innerWidth / innerHeight;
-      camera.updateProjectionMatrix();
-      renderer.setSize(innerWidth, innerHeight);
-    });
-
-    // --- Loop ---
-    let last = performance.now();
-    function tick() {
-      const now = performance.now();
-      const dt = Math.min((now - last) / 1000, 0.033);
-      last = now;
-
-      updateCar(dt);
-      updateCamera(dt);
-      updateHUD(dt);
-
-      renderer.render(scene, camera);
-      requestAnimationFrame(tick);
-    }
-    tick();
-  </script>
+// --- Loop ---
+let last=performance.now();
+function loop(now){
+  const dt=(now-last)/16; last=now;
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+loop(last);
+</script>
 </body>
 </html>
