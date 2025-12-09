@@ -2,102 +2,90 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>2D Open World Driving</title>
+  <title>Stylish 2D Driving (Second Person)</title>
   <style>
-    body { margin:0; background:#222; }
-    canvas { display:block; margin:0 auto; background:#444; }
+    body { margin:0; background:#111; color:#fff; font-family:monospace; }
+    canvas { display:block; margin:0 auto; background:#000; }
+    #hud { position:fixed; top:10px; left:10px; background:rgba(0,0,0,0.5); padding:8px 12px; border-radius:6px; }
   </style>
 </head>
 <body>
 <canvas id="game" width="800" height="600"></canvas>
+<div id="hud"></div>
 <script>
-const canvas = document.getElementById("game");
-const ctx = canvas.getContext("2d");
+const canvas=document.getElementById("game");
+const ctx=canvas.getContext("2d");
+const hud=document.getElementById("hud");
 
-// --- Map setup ---
-const TILE = 64;
-const MAP_W = 50, MAP_H = 50;
-const map = [];
-for (let y=0; y<MAP_H; y++) {
-  map[y] = [];
-  for (let x=0; x<MAP_W; x++) {
-    if (x%5===0 || y%5===0) map[y][x] = "road";
-    else if (Math.random()<0.1) map[y][x] = "building";
-    else map[y][x] = "grass";
+const TILE=64, MAP_W=30, MAP_H=30;
+const map=[];
+for(let y=0;y<MAP_H;y++){
+  map[y]=[];
+  for(let x=0;x<MAP_W;x++){
+    if(x%5===0||y%5===0) map[y][x]="road";
+    else if(Math.random()<0.15) map[y][x]="building";
+    else map[y][x]="grass";
   }
 }
 
-// --- Car setup ---
-let car = { x: TILE*2, y: TILE*2, angle: 0, speed: 0 };
-const keys = {};
-window.addEventListener("keydown", e=>keys[e.code]=true);
-window.addEventListener("keyup", e=>keys[e.code]=false);
+let car={x:TILE*2,y:TILE*2,angle:0,speed:0};
+const keys={};
+window.addEventListener("keydown",e=>keys[e.code]=true);
+window.addEventListener("keyup",e=>keys[e.code]=false);
 
-// --- Update ---
-function update(dt) {
-  if (keys["ArrowUp"]||keys["KeyW"]) car.speed += 0.2;
-  if (keys["ArrowDown"]||keys["KeyS"]) car.speed -= 0.2;
-  if (keys["ArrowLeft"]||keys["KeyA"]) car.angle -= 0.05*car.speed;
-  if (keys["ArrowRight"]||keys["KeyD"]) car.angle += 0.05*car.speed;
-
-  car.speed *= 0.95; // friction
-  const nx = car.x + Math.sin(car.angle)*car.speed;
-  const ny = car.y - Math.cos(car.angle)*car.speed;
-
-  // Collision with buildings
-  const tx = Math.floor(nx/TILE), ty = Math.floor(ny/TILE);
-  if (map[ty] && map[ty][tx] !== "building") {
-    car.x = nx; car.y = ny;
-  }
+function update(){
+  if(keys["ArrowUp"]||keys["KeyW"]) car.speed+=0.3;
+  if(keys["ArrowDown"]||keys["KeyS"]) car.speed-=0.3;
+  if(keys["ArrowLeft"]||keys["KeyA"]) car.angle-=0.05*car.speed;
+  if(keys["ArrowRight"]||keys["KeyD"]) car.angle+=0.05*car.speed;
+  car.speed*=0.95;
+  const nx=car.x+Math.sin(car.angle)*car.speed;
+  const ny=car.y-Math.cos(car.angle)*car.speed;
+  const tx=Math.floor(nx/TILE),ty=Math.floor(ny/TILE);
+  if(map[ty]&&map[ty][tx]!=="building"){car.x=nx;car.y=ny;}
 }
 
-// --- Draw ---
-function draw() {
+function draw(){
   ctx.clearRect(0,0,canvas.width,canvas.height);
+  const camX=car.x-canvas.width/2,camY=car.y-canvas.height/2;
 
-  // Camera center
-  const camX = car.x - canvas.width/2;
-  const camY = car.y - canvas.height/2;
+  // isometric tilt
+  function iso(x,y){
+    return {X:(x-y)*0.7, Y:(x+y)*0.35};
+  }
 
-  // Draw map
-  for (let y=0; y<MAP_H; y++) {
-    for (let x=0; x<MAP_W; x++) {
-      const tile = map[y][x];
-      let color = "#3a3"; // grass
-      if (tile==="road") color="#666";
-      if (tile==="building") color="#555";
-      ctx.fillStyle = color;
-      ctx.fillRect(x*TILE-camX, y*TILE-camY, TILE, TILE);
-      if (tile==="building") {
-        ctx.fillStyle="#999";
-        ctx.fillRect(x*TILE-camX+10, y*TILE-camY+10, TILE-20, TILE-20);
+  for(let y=0;y<MAP_H;y++){
+    for(let x=0;x<MAP_W;x++){
+      const tile=map[y][x];
+      const pos=iso(x*TILE-camX,y*TILE-camY);
+      ctx.fillStyle= tile==="road" ? "#0ff" : tile==="building" ? "#f0f" : "#222";
+      ctx.fillRect(pos.X,pos.Y,TILE*0.7,TILE*0.35);
+      if(tile==="building"){
+        ctx.fillStyle="#fff";
+        ctx.fillRect(pos.X+10,pos.Y-20,TILE*0.5,TILE*0.5);
       }
     }
   }
 
-  // Draw car
+  // car
+  const carPos=iso(car.x-camX,car.y-camY);
   ctx.save();
-  ctx.translate(car.x-camX, car.y-camY);
+  ctx.translate(carPos.X,carPos.Y);
   ctx.rotate(car.angle);
   ctx.fillStyle="red";
   ctx.fillRect(-15,-30,30,60);
   ctx.restore();
 
-  // HUD
-  ctx.fillStyle="white";
-  ctx.fillText("Speed: "+car.speed.toFixed(1),10,20);
-  ctx.fillText("Pos: "+Math.floor(car.x)+","+Math.floor(car.y),10,40);
+  hud.innerHTML=`You are driving at ${Math.floor(car.speed*3.6)} km/h<br>
+                 You are at (${Math.floor(car.x)},${Math.floor(car.y)})`;
 }
 
-// --- Loop ---
-let last=performance.now();
-function loop(now){
-  const dt=(now-last)/16; last=now;
-  update(dt);
+function loop(){
+  update();
   draw();
   requestAnimationFrame(loop);
 }
-loop(last);
+loop();
 </script>
 </body>
 </html>
